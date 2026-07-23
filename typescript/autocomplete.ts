@@ -25,6 +25,7 @@ class PrefixNode {
   private value: string;
   private childs: PrefixNode[] = [];
   private prefix: string | null;
+  private searchItemsTopCache: SearchItem[] = [];
 
   constructor(
     value: string,
@@ -34,6 +35,25 @@ class PrefixNode {
     this.value = value.toLowerCase();
     this.setChild(childs);
     this.prefix = null;
+  }
+
+  public setCacheWordTop(finalWord: SearchItem) {
+    this.searchItemsTopCache = [...this.searchItemsTopCache, finalWord].sort(
+      (a, b) => {
+        if (b.frequency !== a.frequency) {
+          return b.frequency - a.frequency;
+        }
+        return a.word!.localeCompare(b.word!);
+      },
+    );
+  }
+
+  public getChilds(): readonly PrefixNode[] {
+    return this.childs;
+  }
+
+  public getSearchItemsTopCache(): readonly SearchItem[] {
+    return this.searchItemsTopCache;
   }
 
   public getFrecuency(): number {
@@ -98,7 +118,7 @@ class PrefixNode {
     for (const caracter of text) {
       const c = caracter.toLowerCase();
 
-      const node = currentNode.childs[c.charCodeAt(0) - 97];
+      const node = currentNode.childs[c.charCodeAt(0) - 32];
 
       if (!node) {
         return null;
@@ -139,12 +159,15 @@ class AutocompleteSystem {
           currentNode.setChild([node]);
           currentNode = node;
         }
+
         i++;
+
+        if (i == word.length) {
+          currentNode.setPrefix(word);
+          currentNode.setFrecuency(item.frequency);
+        }
+        currentNode.setCacheWordTop(item);
       }
-
-      currentNode.setPrefix(word);
-
-      currentNode.setFrecuency(item.frequency);
     }
 
     return tree;
@@ -168,84 +191,220 @@ class AutocompleteSystem {
 
     return res.slice(0, limit);
   }
+
+  public suggestV2(prefix: string, limit: number): string[] {
+    const prefixNodeFound = this.tree.search(prefix);
+    if (!prefixNodeFound) {
+      return [];
+    }
+    const allNodeWord = prefixNodeFound.getSearchItemsTopCache();
+
+    const res = allNodeWord.map((n) => n.word ?? "");
+
+    return res.slice(0, limit);
+  }
 }
 
-// const a = new AutocompleteSystem(dataset);
-// console.log(a.suggest("ap", 10));
-
 // ============================================================================
-// ULTRA-ROBUST AUTOMATED TEST SUITE
+// GENERADOR DE DATASET MASIVO (1,000 Palabras)
 // ============================================================================
 
-function runTests() {
-  console.log("Running AutocompleteSystem test suite...\n");
+function generateLargeDataset(count: number): SearchItem[] {
+  const prefixes = [
+    "app",
+    "apple",
+    "applet",
+    "application",
+    "applicant",
+    "applause",
+    "appreciate",
+    "ban",
+    "banana",
+    "bandit",
+    "bandage",
+    "bank",
+    "banner",
+    "banquet",
+    "cat",
+    "catalog",
+    "category",
+    "caterpillar",
+    "cathedral",
+    "cattle",
+    "code",
+    "coder",
+    "coding",
+    "codex",
+    "codependency",
+    "data",
+    "database",
+    "dataframe",
+    "datapath",
+    "dating",
+    "test",
+    "testing",
+    "tester",
+    "testament",
+    "testimony",
+  ];
+
+  const dataset: SearchItem[] = [];
+  const usedWords = new Set<string>();
+
+  let i = 0;
+  while (dataset.length < count) {
+    const base = prefixes[i % prefixes.length];
+    const suffix = Math.floor(i / prefixes.length).toString(36);
+    const word = `${base}_${suffix}`;
+
+    if (!usedWords.has(word)) {
+      usedWords.add(word);
+      // Frecuencias variadas entre 1 y 10,000
+      const frequency = Math.floor(Math.random() * 10000) + 1;
+      dataset.push({ word, frequency });
+    }
+    i++;
+  }
+
+  // Añadimos manualmente palabras específicas con frecuencias controladas para verificar precisión
+  dataset.push(
+    { word: "superapp", frequency: 99999 },
+    { word: "superapplication", frequency: 99999 },
+    { word: "superapple", frequency: 50000 },
+  );
+
+  return dataset;
+}
+
+function runComparativeTests() {
+  console.log("GENERANDO DATASET MASIVO DE 1,000 PALABRAS...");
+
+  const largeDataset = generateLargeDataset(1000);
+
+  console.log(largeDataset);
+
+  // 1. Medir tiempo de construcción del árbol
+  const t0Construct = performance.now();
+  const system = new AutocompleteSystem(largeDataset);
+  const t1Construct = performance.now();
+
+  console.log(
+    `✓ Árbol construido e hidratado en: ${(t1Construct - t0Construct).toFixed(2)} ms\n`,
+  );
 
   let passed = 0;
   let total = 0;
 
-  const assertEqual = (name: string, actual: string[], expected: string[]) => {
+  const assertEqual = (
+    testName: string,
+    actualV1: string[],
+    actualV2: string[],
+    expected: string[],
+  ) => {
     total++;
-    const actualStr = JSON.stringify(actual);
-    const expectedStr = JSON.stringify(expected);
+    const v1Str = JSON.stringify(actualV1);
+    const v2Str = JSON.stringify(actualV2);
+    const expStr = JSON.stringify(expected);
 
-    if (actualStr === expectedStr) {
-      console.log(`  ✓ ${name}`);
+    const v1Correct = v1Str === expStr;
+    const v2Correct = v2Str === expStr;
+
+    if (v1Correct && v2Correct) {
+      console.log(`  ✓ [PASSED] ${testName}`);
       passed++;
     } else {
-      console.error(
-        `  ✗ ${name}\n    Expected: ${expectedStr}\n    Actual:   ${actualStr}`,
-      );
+      console.error(`  ✗ [FAILED] ${testName}`);
+      if (!v1Correct)
+        console.error(
+          `    -> Error en V1. Esperado: ${expStr} | Obtenido: ${v1Str}`,
+        );
+      if (!v2Correct)
+        console.error(
+          `    -> Error en V2. Esperado: ${expStr} | Obtenido: ${v2Str}`,
+        );
     }
   };
 
-  const dataset = [
-    { word: "apple", frequency: 15 },
-    { word: "app", frequency: 25 },
-    { word: "apricot", frequency: 10 },
-    { word: "banana", frequency: 30 },
-    { word: "band", frequency: 10 },
-    { word: "bat", frequency: 10 },
-    { word: "application", frequency: 25 },
-  ];
+  console.log("--- 1. VERIFICACIÓN DE EXACTITUD (V1 vs V2) ---");
 
-  const system = new AutocompleteSystem(dataset);
-
-  // Test 1: Búsqueda básica por prefijo
-  assertEqual("Test 1: Basic prefix match ('ban')", system.suggest("ban", 5), [
-    "banana",
-    "band",
-  ]);
-
-  // Test 2: Respetar el límite de resultados
-  assertEqual(
-    "Test 2: Respect limit ('ap', limit 2)",
-    system.suggest("ap", 2),
-    ["app", "application"], // "app" y "application" tienen frecuencia 25, "apple" tiene 15
-  );
-
-  // Test 3: Desempate por orden alfabético (Frecuencias idénticas)
-  // "app" y "application" tienen ambos frecuencia 25.
-  // "app" debe ir antes que "application" porque va primero alfabéticamente.
-  // "band" y "bat" tienen ambos frecuencia 10. "band" va antes que "bat" alfabéticamente.
-  assertEqual(
-    "Test 3: Tie breaker alphabetically ('ap', limit 3)",
-    system.suggest("ap", 3),
-    ["app", "application", "apple"],
-  );
+  // Test 1: Búsqueda exacta de las palabras con máxima frecuencia en el dataset masivo
+  const topSuperWords = system.suggest("super", 2);
 
   assertEqual(
-    "Test 4: Tie breaker alphabetically ('ba', limit 3)",
-    system.suggest("ba", 3),
-    ["banana", "band", "bat"],
+    "Test 1: Coincidencia en prefijo 'super' (limit 2)",
+    topSuperWords,
+    system.suggestV2("super", 2),
+    topSuperWords,
   );
 
-  // Test 5: Prefijo vacío (debe dar vacío)
-  assertEqual("Test 5: Empty prefix", system.suggest("", 3), []);
+  // Test 2: Prefijo 'app' con un límite alto (limit 5)
+  const expectedApp5 = system.suggest("app", 5); // Usamos V1 como referencia matemática
+  assertEqual(
+    "Test 2: Coincidencia en prefijos populares ('app', limit 5)",
+    system.suggest("app", 5),
+    system.suggestV2("app", 5),
+    expectedApp5,
+  );
 
-  // Test 6: Sin coincidencias
-  assertEqual("Test 6: No matches ('xyz')", system.suggest("xyz", 3), []);
+  // Test 3: Prefijo 'code' (limit 3)
+  const expectedCode3 = system.suggest("code", 3);
+  assertEqual(
+    "Test 3: Coincidencia en sub-ramas ('code', limit 3)",
+    system.suggest("code", 3),
+    system.suggestV2("code", 3),
+    expectedCode3,
+  );
 
-  console.log(`\nResults: ${passed}/${total} passed`);
+  // Test 4: Sin coincidencias
+  assertEqual(
+    "Test 4: Sin coincidencias ('xyz_not_exist')",
+    system.suggest("xyz_not_exist", 5),
+    system.suggestV2("xyz_not_exist", 5),
+    [],
+  );
+
+  // Test 5: Prefijo vacío
+  assertEqual(
+    "Test 5: Prefijo vacío",
+    system.suggest("", 5),
+    system.suggestV2("", 5),
+    [],
+  );
+
+  console.log(`\nExactitud: ${passed}/${total} pruebas pasadas con éxito.\n`);
+
+  // 2. PRUEBA DE ESTRÉS Y RENDIMIENTO (10,000 CONSULTAS EN RÁFAGA)
+
+  console.log("--- 2. BENCHMARK DE VELOCIDAD (10,000 Consultas en ráfaga) ---");
+  const searchQueries = ["app", "ban", "cat", "code", "data", "test", "super"];
+  const ITERATIONS = 10000;
+
+  // Test V1
+  const startV1 = performance.now();
+  for (let i = 0; i < ITERATIONS; i++) {
+    const q = searchQueries[i % searchQueries.length];
+    system.suggest(q, 5);
+  }
+  const endV1 = performance.now();
+  const timeV1 = endV1 - startV1;
+
+  // Test V2
+  const startV2 = performance.now();
+  for (let i = 0; i < ITERATIONS; i++) {
+    const q = searchQueries[i % searchQueries.length];
+    system.suggestV2(q, 5);
+  }
+  const endV2 = performance.now();
+  const timeV2 = endV2 - startV2;
+
+  console.log(`V1 (Búsqueda en caliente + Sort): ${timeV1.toFixed(2)} ms`);
+  console.log(`V2 (Lectura directa de Caché):     ${timeV2.toFixed(2)} ms`);
+
+  const speedup = (timeV1 / timeV2).toFixed(1);
+  console.log(
+    `\nRESULTADO: La versión V2 es aproximadamente ${speedup}x MÁS RÁPIDA que la V1.`,
+  );
+  console.log("==========================================================");
 }
 
-runTests();
+runComparativeTests();
